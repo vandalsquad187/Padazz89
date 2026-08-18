@@ -1,7 +1,8 @@
 #!/system/bin/sh
-# padazz89 gp_manager v5.1 (Governor)
+# padazz89 gp_manager v5.2 (Governor)
 # Startet/stoppt den Gamepad-Plus-Server NACH BEDARF (0% Last ohne Controller).
-# v5.1: PID-File-Heilung - auch bei Boot-Race bleibt deterministisch genau eine Instanz.
+# v5.2: Koenigswahl - der erste Schreiber von gov.pid ist Koenig und bleibt es;
+#       alle anderen Instanzen treten sofort ab (atomares mv, Konvergenz in 1 Runde).
 # Konfig (hot-reload): DIR/policy=off = pause, DIR/grace = Zyklen * 5s
 DIR=/data/local/tmp/gpfix
 SRV_FILE=$DIR/start_server.sh
@@ -10,7 +11,6 @@ LOG=$DIR/manager.log
 POLICY=$DIR/policy
 GRACE_FILE=$DIR/grace
 GOVPID=$DIR/gov.pid
-GOVRUN=$DIR/gov.run
 
 log() {
   if [ -f "$LOG" ] && [ "$(wc -c < "$LOG" 2>/dev/null || echo 0)" -gt 65536 ]; then
@@ -19,24 +19,16 @@ log() {
   echo "[$(date '+%F %T')] $*" >> "$LOG"
 }
 
-# Fuerrung je Runde: Lock gewinnen -> alter Prozess weicht (kill). Verlieren -> sauber abtreten.
+# Koenigswahl: nur eine Instanz darf weiterleben
 lead() {
-  if mkdir "$GOVRUN" 2>/dev/null; then
-    OLD=$(cat "$GOVPID" 2>/dev/null)
-    if [ -n "$OLD" ] && [ "$OLD" != "$$" ]; then
-      kill "$OLD" 2>/dev/null
-      log "duplicate governor ${OLD} entfernt"
-      sleep 1
-    fi
-    echo "$$" > "$GOVPID" 2>/dev/null
-    rm -rf "$GOVRUN" 2>/dev/null
-    return 0
-  else
+  if [ -r "$GOVPID" ] && [ "$(cat "$GOVPID" 2>/dev/null)" != "$$" ]; then
     exit 0
   fi
+  echo "$$" > "$GOVPID.tmp.$$" 2>/dev/null || exit 0
+  mv -f "$GOVPID.tmp.$$" "$GOVPID" 2>/dev/null || exit 0
 }
 
-sleep 1
+# falls ein Koenig ging (crash): uebernehmen erlaubt, alles andere tritt ab
 lead
 
 server_pids() {
@@ -66,7 +58,6 @@ controller_connected() {
 
 idle=0
 while true; do
-  # jede Runde: genau eine führende Instanz durchsetzen
   lead
 
   GRACE=$(cat "$GRACE_FILE" 2>/dev/null || echo 36)
