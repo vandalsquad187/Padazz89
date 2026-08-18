@@ -1,12 +1,8 @@
 #!/system/bin/sh
-# padazz89 gp_manager v4 (Governor)
-# Startet/stoppt den Gamepad-Plus-Server NACH BEDARF:
-# - Controller verbunden  -> Server starten (lock-gesichert), offline-faehig, kein "Aktivieren"
-# - Controller getrennt   -> Gnadenzeit, dann Server beenden (0% CPU)
-# - Boot ohne Controller  -> nichts laeuft
-# Konfig (hot-reload, je Zyklus neu gelesen):
-#   DIR/policy = "off" -> Governor aus (nur manueller Betrieb)
-#   DIR/grace  = Zyklen * 5s Gnadenzeit (Default 36 = 3 min)
+# padazz89 gp_manager v5 (Governor)
+# Startet/stoppt den Gamepad-Plus-Server NACH BEDARF (0% Last ohne Controller).
+# v5: Selbst-Dedup - genau eine Instanz bleibt, egal wer sie startet.
+# Konfig (hot-reload): DIR/policy=off = pause, DIR/grace = Zyklen * 5s
 DIR=/data/local/tmp/gpfix
 SRV_FILE=$DIR/start_server.sh
 LOCK=$DIR/server.lock
@@ -20,6 +16,18 @@ log() {
   fi
   echo "[$(date '+%F %T')] $*" >> "$LOG"
 }
+
+# andere gp_manager-Instanzen beenden (wir bleiben)
+for d in /proc/[0-9]*; do
+  read -r c < "$d/comm" 2>/dev/null
+  [ "$c" = "sh" ] || continue
+  [ "${d#/proc/}" = "$$" ] && continue
+  cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+  case "$cmd" in
+    *gp_manager.sh*) kill "${d#/proc/}" 2>/dev/null;;
+  esac
+done
+sleep 1
 
 server_pids() {
   R=""
