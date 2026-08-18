@@ -1,7 +1,7 @@
 #!/system/bin/sh
-# padazz89 gp_manager v5 (Governor)
+# padazz89 gp_manager v5.1 (Governor)
 # Startet/stoppt den Gamepad-Plus-Server NACH BEDARF (0% Last ohne Controller).
-# v5: Selbst-Dedup - genau eine Instanz bleibt, egal wer sie startet.
+# v5.1: PID-File-Heilung - auch bei Boot-Race bleibt deterministisch genau eine Instanz.
 # Konfig (hot-reload): DIR/policy=off = pause, DIR/grace = Zyklen * 5s
 DIR=/data/local/tmp/gpfix
 SRV_FILE=$DIR/start_server.sh
@@ -9,6 +9,8 @@ LOCK=$DIR/server.lock
 LOG=$DIR/manager.log
 POLICY=$DIR/policy
 GRACE_FILE=$DIR/grace
+GOVPID=$DIR/gov.pid
+GOVRUN=$DIR/gov.run
 
 log() {
   if [ -f "$LOG" ] && [ "$(wc -c < "$LOG" 2>/dev/null || echo 0)" -gt 65536 ]; then
@@ -17,17 +19,25 @@ log() {
   echo "[$(date '+%F %T')] $*" >> "$LOG"
 }
 
-# andere gp_manager-Instanzen beenden (wir bleiben)
-for d in /proc/[0-9]*; do
-  read -r c < "$d/comm" 2>/dev/null
-  [ "$c" = "sh" ] || continue
-  [ "${d#/proc/}" = "$$" ] && continue
-  cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
-  case "$cmd" in
-    *gp_manager.sh*) kill "${d#/proc/}" 2>/dev/null;;
-  esac
-done
+# Fuerrung je Runde: Lock gewinnen -> alter Prozess weicht (kill). Verlieren -> sauber abtreten.
+lead() {
+  if mkdir "$GOVRUN" 2>/dev/null; then
+    OLD=$(cat "$GOVPID" 2>/dev/null)
+    if [ -n "$OLD" ] && [ "$OLD" != "$$" ]; then
+      kill "$OLD" 2>/dev/null
+      log "duplicate governor ${OLD} entfernt"
+      sleep 1
+    fi
+    echo "$$" > "$GOVPID" 2>/dev/null
+    rm -rf "$GOVRUN" 2>/dev/null
+    return 0
+  else
+    exit 0
+  fi
+}
+
 sleep 1
+lead
 
 server_pids() {
   R=""
@@ -56,6 +66,9 @@ controller_connected() {
 
 idle=0
 while true; do
+  # jede Runde: genau eine führende Instanz durchsetzen
+  lead
+
   GRACE=$(cat "$GRACE_FILE" 2>/dev/null || echo 36)
   case "$GRACE" in ''|*[!0-9]*) GRACE=36;; esac
   [ "$GRACE" -lt 1 ] && GRACE=1
