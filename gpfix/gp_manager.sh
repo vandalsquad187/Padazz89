@@ -1,8 +1,8 @@
 #!/system/bin/sh
-# padazz89 gp_manager v5.2 (Governor)
+# padazz89 gp_manager v5.3 (Governor)
 # Startet/stoppt den Gamepad-Plus-Server NACH BEDARF (0% Last ohne Controller).
-# v5.2: Koenigswahl - der erste Schreiber von gov.pid ist Koenig und bleibt es;
-#       alle anderen Instanzen treten sofort ab (atomares mv, Konvergenz in 1 Runde).
+# v5.3: Koenigswahl inkl. cmdline-Pruefung - PID-Wiederverwendung nach Reboot
+#       wird als stale erkannt und uebernommen (atomares mv, Konvergenz in 1 Runde).
 # Konfig (hot-reload): DIR/policy=off = pause, DIR/grace = Zyklen * 5s
 DIR=/data/local/tmp/gpfix
 SRV_FILE=$DIR/start_server.sh
@@ -19,16 +19,21 @@ log() {
   echo "[$(date '+%F %T')] $*" >> "$LOG"
 }
 
-# Koenigswahl: nur eine Instanz darf weiterleben
+# Koenigswahl: nur eine lebende Governor-Instanz. Fremde PID ohne Governor-cmdline = stale.
 lead() {
-  if [ -r "$GOVPID" ] && [ "$(cat "$GOVPID" 2>/dev/null)" != "$$" ]; then
-    exit 0
+  if [ -r "$GOVPID" ]; then
+    OLD=$(cat "$GOVPID" 2>/dev/null)
+    if [ -n "$OLD" ] && [ "$OLD" != "$$" ] && [ -d "/proc/$OLD" ]; then
+      cmd=$(tr '\0' ' ' < "/proc/$OLD/cmdline" 2>/dev/null)
+      case "$cmd" in
+        *gp_manager.sh*) exit 0;;
+      esac
+    fi
   fi
   echo "$$" > "$GOVPID.tmp.$$" 2>/dev/null || exit 0
   mv -f "$GOVPID.tmp.$$" "$GOVPID" 2>/dev/null || exit 0
 }
 
-# falls ein Koenig ging (crash): uebernehmen erlaubt, alles andere tritt ab
 lead
 
 server_pids() {

@@ -66,6 +66,8 @@ for d in /proc/[0-9]*; do
   esac
 done
 sleep 1
+# saubere Startbasis: alte Koenig-Marke entfernen (PID-Wiederverwendung verhindert Fehlschuss)
+rm -f "$DIR/gov.pid" "$DIR/gov.pid.tmp."* 2>/dev/null
 mkdir "$DIR/governor.lock" 2>/dev/null || exit 0
 setsid /system/bin/sh "$DIR/gp_manager.sh" >/dev/null 2>&1 </dev/null &
 sleep 1
